@@ -1,0 +1,32 @@
+---
+- name: generate GPG key, download docker credential helper and init pass
+  hosts: "{{ hosts | default('jenkins') }}"
+  vars:
+    gpg_user: ict381student
+    gpg_realname: "ICT381 Student"
+    gpg_useremail: "ict381student@suss.edu.sg"
+    gpg_pubkeyfile: ict381student.pub
+    gpg_privkeyfile: ict381student.priv
+    gpg_generator_user: ubuntu
+    gpg_home: "/home/ubuntu"
+    gpg_passphrase: ""
+
+  roles:
+  - role: juju4.gpgkey_generate
+
+  tasks:
+  - name: Get GPG Key Fingerprint
+    command: gpg --list-keys --with-colons
+    register: gpg_keys
+
+  - name: Extract Fingerprint details
+    set_fact:
+      gpg_fingerprint: "{{ gpg_keys.stdout_lines | select('search', '^fpr:::::::::') | map('regex_replace', '^fpr:::::::::', '') | map('regex_replace', ':$', '') | list | first }}"
+
+  - name: Set GPG key trust level to Ultimate
+    shell: printf "5\ny\n" | gpg --batch --command-fd 0 --edit-key {{gpg_fingerprint}} trust quit
+    changed_when: false
+
+  - name: init the password store with email address
+    command: pass init {{gpg_useremail}}
+    changed_when: false

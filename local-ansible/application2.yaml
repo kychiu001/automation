@@ -1,0 +1,112 @@
+---
+
+- name: Install Jenkins
+  hosts: jenkins
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+
+  tasks:
+
+  - name: download Hashicorp GPG key and store in keyring
+    get_url:
+      url: https://apt.releases.hashicorp.com/gpg
+      dest: /etc/apt/trusted.gpg.d/terraform.asc
+      mode: '0644'
+
+  - name: Add HashiCorp APT repository
+    apt_repository:
+      repo: "deb [arch=amd64 signed-by=/etc/apt/trusted.gpg.d/terraform.asc] https://apt.releases.hashicorp.com jammy main"
+      state: present
+
+  - name: Install necessary software
+    apt:
+      name: "{{ item }}"
+      state: present
+      update_cache: yes
+    loop:
+    - openjdk-21-jdk
+    - openjdk-21-jre
+    - terraform
+
+  - name: Install boto3
+    pip:
+      name: boto3
+      state: present
+
+  - name: Add Jenkins repo key
+    apt_key:
+      url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+      state: present
+
+  - name: Add Jenkins repo
+    apt_repository:
+      repo: deb https://pkg.jenkins.io/debian-stable binary/
+      state: present
+
+  - name: Install Jenkins
+    apt:
+      name: jenkins
+      state: latest
+      update_cache: yes
+
+  - name: Add jenkins user to docker group
+    user:
+      name: jenkins
+      groups: docker
+      append: yes
+      state: present
+
+  - name: Reboot the remote EC2 machine
+    reboot:
+
+
+  - name: ensure that the aws and ssh folder for jenkins is present
+    file:
+      path: "/var/lib/jenkins/{{item}}"
+      owner: jenkins
+      group: jenkins
+      state: directory
+      mode: '0700'
+      recurse: true
+    loop:
+    - .ssh
+    - .aws
+
+  - name: ensure that the known_host file for jenkins is present
+    file:
+      path: /var/lib/jenkins/.ssh/known_hosts
+      state: touch
+      owner: jenkins
+      group: jenkins
+      mode: '0600'
+
+  - name: add Github SSH public key to known_hosts on delivery machine for jenkins user
+    shell: "ssh-keyscan -t rsa github.com > /var/lib/jenkins/.ssh/known_hosts"
+
+  - name: create ansible folder in /etc/ansible
+    file:
+      path: /etc/ansible
+      state: directory
+      mode: '0755'
+
+  - name: create ansible configuration file in /etc/ansible folder
+    blockinfile:
+      path: /etc/ansible/ansible.cfg
+      create: true
+      block: |
+        [default]
+        host_key_checking = False
+
+        [ssh_connection]
+        retries=10
+
+  - name: git clone juju4 ansible gpgkey generate role
+    git:
+      repo: "https://github.com/imhl/ansible-gpgkey_generate.git"
+      dest: /var/lib/jenkins/.ansible/roles/juju4.gpgkey_generate
+      version: main
+    become: true
+    become_user: jenkins
+    become_method: sudo

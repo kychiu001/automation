@@ -1,0 +1,122 @@
+---
+
+- name: Configure necessary software in EC2 (Part 1)
+  hosts: jenkins
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars_files:
+    - secrets.yaml
+
+  tasks:
+  - name: Install necessary software
+    apt:
+      name: "{{ item }}"
+      state: present
+      update_cache: yes
+    loop:
+    - python3-pip
+    - gnupg
+    - software-properties-common
+    - unzip
+    - git
+    - pass
+    - acl
+    - rng-tools
+
+  - name: Install necessary libraries
+    pip:
+      name: "{{item}}"
+    loop:
+    - ansible
+    - docker
+
+  - name: Add Docker GPG key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add Docker repo
+    apt_repository:
+      repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable"
+      state: present
+
+  - name: Update apt cache and install docker
+    apt:
+      name: docker-ce
+      state: latest
+      update_cache: true
+
+  - name: Download docker credential helper
+    get_url:
+      url: https://github.com/docker/docker-credential-helpers/releases/download/v0.9.3/docker-credential-pass-v0.9.3.linux-amd64
+      dest: /usr/local/bin/docker-credential-pass
+      mode: 755
+      
+  - name: add GitHub SSH public key to known_hosts file
+    shell: "ssh-keyscan -t rsa github.com > /root/.ssh/known_hosts"
+    changed_when: false
+
+  - name: generate deploy key for the StaycationX and myReactApp repos
+    openssh_keypair:
+      path: "~/.ssh/{{item}}-deploy-key"
+      owner: root
+      mode: '0400'
+    loop:
+    - "myReactApp"
+    - "StaycationX"
+
+  - name: read deploy public keys of both repos from jenkins machine
+    slurp:
+      src: "~/.ssh/{{item}}-deploy-key.pub"
+    loop:
+    - "myReactApp"
+    - "StaycationX"
+    register: deploypubkeys
+
+  - name: upload deploy keys to GitHub to the respective repos
+    github_deploy_key:
+      repo: "{{ item.item}}"
+      read_only: true
+      key: "{{ item.content | b64decode }}"
+      name: "{{ item.item}}-deploy-key"
+      owner: "{{GIT_USERNAME}}"
+      token: "{{GITHUB_PAT}}"
+    loop: "{{deploypubkeys.results}}"
+
+  - name: create ansible roles folder in home directory
+    file:
+      path: /home/ubuntu/.ansible/roles/juju4.gpgkey_generate/
+      state: directory
+      mode: '0755'
+      owner: ubuntu
+      group: ubuntu
+
+  - name: git clone juju4 role
+    git:
+      repo: "https://github.com/imhl/ansible-gpgkey_generate.git"
+      dest: /home/ubuntu/.ansible/roles/juju4.gpgkey_generate
+      version: main
+    become: true
+    become_user: ubuntu
+    become_method: sudo
+
+
+- name: install juju4 role in localhost (Part 2)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: create ansible roles folder in home directory
+    file:
+      path: /home/ubuntu/.ansible/roles/juju4.gpgkey_generate/
+      state: directory
+      mode: '0755'
+      owner: username
+      group: staff
+
+  - name: git clone juju4 role
+    git:
+      repo: "https://github.com/imhl/ansible-gpgkey_generate.git"
+      dest: /home/ubuntu/.ansible/roles/juju4.gpgkey_generate
+      version: main

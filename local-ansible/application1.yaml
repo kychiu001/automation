@@ -1,0 +1,146 @@
+---
+- import_playbook: gen-gpgkey-ubuntu.yaml
+- name: Clone Repo from Github
+  hosts: jenkins
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars_files:
+    - secrets.yaml
+
+  tasks:
+  - name: Clone the StaycationX repository with deploy key
+    git:
+      repo: "git@github.com:{{GIT_USERNAME}}/StaycationX.git"
+      dest: /opt/StaycationX
+      version: main
+    environment:
+      GIT_SSH_COMMAND: "ssh -i ~/.ssh/StaycationX-deploy-key"
+
+  - name: Clone the myReactApp repository with deploy key
+    git:
+      repo: "git@github.com:{{GIT_USERNAME}}/myReactApp.git"
+      dest: /opt/myReactApp
+      version: main
+    environment:
+      GIT_SSH_COMMAND: "ssh -i ~/.ssh/myReactApp-deploy-key"
+
+  - name: Stop running containers
+    command: docker compose -f dockerhub.yml down
+    args:
+      chdir: /opt/StaycationX
+
+  - name: Add ubuntu user to docker group
+    user:
+      name: ubuntu
+      groups: docker
+      append: yes
+      state: present
+
+  - name: Reboot the remote EC2 machine
+    reboot:
+
+- name: Build, tag, push images to Dockerhub and run with Docker Compose
+  hosts: jenkins
+  gather_facts: false
+  vars_files:
+    - secrets.yaml
+
+  tasks:
+  - name: Ensure config.json file exists in .docker folder
+    file:
+      path: /home/ubuntu/.docker
+      state: directory
+      mode: '0755'
+  
+  - name: Insert credsStore:pass into config.json file
+    lineinfile:
+      path: /home/ubuntu/.docker/config.json
+      create: yes
+      line: '{"credsStore": "pass"}'
+
+  - name: Get all Docker images
+    command: docker images --format "{{ '{{.Repository}}:{{.Tag}}' }}"
+    register: docker_images
+
+  - name: Set images to exclude
+    set_fact:
+      exclude_images:
+      - "node:16.20.2-alpine"
+      - "python:3.12"
+      - "nginx:latest"
+      - "mongo:latest"
+
+  - name: Find images to remove
+    set_fact:
+      images_to_remove: "{{ docker_images.stdout_lines | difference(exclude_images) }}"
+
+  - name: Remove existing Docker images excluding specific ones
+    community.docker.docker_image:
+      name: "{{ item }}"
+      state: absent
+    loop: "{{ images_to_remove }}"
+    when: item is defined
+
+  - name: Login to DockerHub
+    community.docker.docker_login:
+      username: "{{DOCKER_USERNAME}}"
+      password: "{{DOCKER_PASS}}"
+      reauthorize: true
+    no_log: true
+
+  - name: Build StaycationX Image
+    community.docker.docker_image:
+      name: ict381_staycation
+      build:
+        path: /opt/StaycationX
+      source: build
+
+  - name: Tag and Push to repo for StaycationX
+    community.docker.docker_image:
+      name: ict381_staycation
+      repository: "{{DOCKER_USERNAME}}/ict381_staycation"
+      push: true
+      source: local
+
+  - name: Build MongoDB Image
+    community.docker.docker_image:
+      name: ict381_mongo
+      build:
+        path: /opt/StaycationX
+        dockerfile: DockerfileMongo
+      source: build
+
+  - name: Tag and Push to repo for MongoDB
+    community.docker.docker_image:
+      name: ict381_mongo
+      repository: "{{DOCKER_USERNAME}}/ict381_mongo"
+      push: true
+      source: local
+
+  - name: Build myReactApp Image
+    community.docker.docker_image:
+      name: ict381_myreactapp
+      build:
+        path: /opt/myReactApp
+        dockerfile: DockerfilemyReactApp
+      source: build
+
+  - name: Tag and Push to repo for myReactApp
+    community.docker.docker_image:
+      name: ict381_myreactapp
+      repository: "{{DOCKER_USERNAME}}/ict381_myreactapp"
+      push: true
+      source: local
+
+  - name: Prune system to conserve space
+    community.docker.docker_prune:
+      images: true
+      builder_cache: true
+      volumes: true
+      networks: true
+      containers: true
+
+  - name: Use docker compose to deploy the application with dockerhub.yml
+    command: docker compose -f /opt/StaycationX/dockerhub.yml up -d
