@@ -14,14 +14,14 @@ pipeline {
             steps {
                 script {
                     if (params.Action == 'apply') {
-                        git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/automation.git'
+                        git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:kychiu001/automation.git'
 
                         dir('StaycationX') {
-                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/StaycationX.git'
+                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:kychiu001/StaycationX.git'
                         }
 
                         dir('myReactApp') {
-                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/myReactApp.git'
+                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:kychiu001/myReactApp.git'
                         }
                     }
                 }
